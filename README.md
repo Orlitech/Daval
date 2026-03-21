@@ -1,7 +1,5 @@
 # 🏥 DAVAL — Data Validation & Analytics System
 
-![DAVAL Preview](p3.png)
-![DAVAL Preview](p1.png)
 ![DAVAL Preview](p2.png)
 
 
@@ -140,15 +138,15 @@ DAVAL enhances healthcare data systems by:
 
 ### 🔐 Login Interface
 
-![Login](./screenshots/login.png)
+![Login](p3.png)
 
 ### 📊 Dashboard
 
-![Dashboard](./screenshots/dashboard.png)
+![Dashboard](p1.png)
 
 ### 📝 Validation Module
 
-![Validation](./screenshots/validation.png)
+![Validation](p2.png)
 
 ---
 
