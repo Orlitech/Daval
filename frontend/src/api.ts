@@ -147,7 +147,9 @@ API.interceptors.response.use(
       case 403:
         return Promise.reject(new Error('You do not have permission to perform this action.'));
       case 404:
-        return Promise.reject(new Error('Resource not found.'));
+       return Promise.reject(
+              new Error(error.response?.data?.detail || 'Resource not found.')
+            );
       case 422:
         return Promise.reject(new Error('Validation error. Please check your data.'));
       case 500:
@@ -338,6 +340,99 @@ export const radet = {
   }
 };
 
+// Add to your existing API exports
+
+export const admin = {
+  /**
+   * Get all users (admin only)
+   */
+  getUsers: async (): Promise<User[]> => {
+    return handleResponse<User[]>(API.get('/api/admin/users'));
+  },
+
+  /**
+   * Update a user (admin only)
+   */
+  updateUser: async (userId: number, userData: UserCreate): Promise<User> => {
+    return handleResponse<User>(API.put(`/api/admin/users/${userId}`, userData));
+  },
+
+  /**
+   * Delete a user (admin only)
+   */
+  deleteUser: async (userId: number): Promise<{ message: string }> => {
+    return handleResponse<{ message: string }>(API.delete(`/api/admin/users/${userId}`));
+  },
+
+  /**
+   * Get system statistics (admin only)
+   */
+  getSystemStats: async (): Promise<any> => {
+    return handleResponse<any>(API.get('/api/admin/system-stats'));
+  },
+
+  /**
+   * Get audit logs (admin only)
+   */
+  getAuditLogs: async (params?: {
+    limit?: number;
+    offset?: number;
+    user_id?: number;
+    action?: string;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<any> => {
+    return handleResponse<any>(API.get('/api/admin/audit-logs', { params }));
+  },
+
+  /**
+   * Export system logs (admin only)
+   */
+  exportLogs: async (params?: {
+    format?: string;
+    start_date?: string;
+    end_date?: string;
+  }): Promise<ExportData> => {
+    return handleResponse<ExportData>(API.get('/api/admin/export-logs', { params }));
+  },
+
+  /**
+   * Create database backup (admin only)
+   */
+  createBackup: async (): Promise<any> => {
+    return handleResponse<any>(API.post('/api/admin/backup'));
+  },
+
+  /**
+   * List available backups (admin only)
+   */
+  listBackups: async (): Promise<{ backups: Array<{ filename: string; size_mb: number; modified: string }> }> => {
+    return handleResponse<any>(API.get('/api/admin/backups'));
+  },
+
+  /**
+   * Get system configuration (admin only)
+   */
+  getSystemConfig: async (): Promise<any> => {
+    return handleResponse<any>(API.get('/api/admin/system-config'));
+  },
+
+  /**
+   * Update system configuration (admin only)
+   */
+  updateSystemConfig: async (config: any): Promise<{ message: string }> => {
+    return handleResponse<{ message: string }>(API.post('/api/admin/system-config', config));
+  },
+
+  /**
+   * Clean up old data (admin only)
+   */
+  cleanupDatabase: async (daysToKeep: number = 365): Promise<any> => {
+    return handleResponse<any>(API.post('/api/admin/database/cleanup', null, {
+      params: { days_to_keep: daysToKeep }
+    }));
+  }
+};
 // ==================== VALIDATION API ====================
 
 export const validation = {

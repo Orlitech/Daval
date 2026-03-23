@@ -1518,7 +1518,10 @@ async def get_correction_requests(
 # ==================== DASHBOARD ENDPOINTS ====================
 
 @app.get("/api/dashboard/stats", response_model=DashboardStatsResponse)
-async def get_dashboard_stats(db: Session = Depends(get_db)):
+async def get_dashboard_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     """Get main dashboard statistics"""
     cycle = db.query(ValidationCycle).filter(ValidationCycle.is_active == True).first()
     if not cycle:
@@ -1599,7 +1602,7 @@ async def get_staff_performance(
 
 @app.get("/api/dashboard/quality-metrics", response_model=QualityMetricsResponse)
 async def get_quality_metrics(
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get quality metrics"""
@@ -1715,7 +1718,7 @@ async def get_quality_metrics(
 
 @app.get("/api/dashboard/trends", response_model=List[TrendDataResponse])
 async def get_trends(
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get accuracy trends over cycles"""
@@ -1893,7 +1896,7 @@ async def get_hospital_number_validation_summary(
 
 @app.get("/api/dashboard/validation-summaries", response_model=List[HospitalNumberValidationSummary])
 async def get_all_validation_summaries(
-    current_user: User = Depends(require_role(UserRole.SUPERVISOR)),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get validation summaries for all hospital numbers (deduplicated)"""
@@ -2523,6 +2526,428 @@ async def debug_check_cycle(cycle_id: int, db: Session = Depends(get_db)):
             "active_patients": active_patients,
             "total_validations": validations
         }
+    }
+# ==================== ADMIN USER MANAGEMENT ENDPOINTS ====================
+
+@app.get("/api/admin/users", response_model=List[UserResponse])
+async def get_all_users(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Get all users (admin only)"""
+    users = db.query(User).filter(User.is_active == True).all()
+    return users
+
+@app.put("/api/admin/users/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: int,
+    user_update: UserCreate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Update a user (admin only)"""
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Check if username is being changed and already exists
+    if user_update.username != user.username:
+        existing = db.query(User).filter(User.username == user_update.username).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Username already exists")
+        user.username = user_update.username
+    
+    user.full_name = user_update.full_name
+    user.role = user_update.role
+    user.facility = user_update.facility
+    
+    # Update password only if provided
+    if user_update.password and user_update.password.strip():
+        user.password_hash = hash_password(user_update.password)
+    
+    db.commit()
+    db.refresh(user)
+    return user
+
+@app.delete("/api/admin/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Delete a user (admin only)"""
+    # Prevent deleting self
+    if user_id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account")
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Soft delete - deactivate user instead of hard delete
+    user.is_active = False
+    db.commit()
+    
+    return {"message": f"User {user.username} deactivated successfully"}
+
+# ==================== ADMIN STATS ENDPOINTS ====================
+
+@app.get("/api/admin/system-stats")
+async def get_system_stats(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Get comprehensive system statistics (admin only)"""
+    
+    # User stats
+    total_users = db.query(User).filter(User.is_active == True).count()
+    admin_users = db.query(User).filter(User.role == UserRole.ADMIN, User.is_active == True).count()
+    supervisor_users = db.query(User).filter(User.role == UserRole.SUPERVISOR, User.is_active == True).count()
+    staff_users = db.query(User).filter(User.role == UserRole.STAFF, User.is_active == True).count()
+    
+    # Cycle stats
+    active_cycle = db.query(ValidationCycle).filter(ValidationCycle.is_active == True).first()
+    total_cycles = db.query(ValidationCycle).count()
+    
+    # Patient stats
+    total_patients = db.query(RADETRecord).count()
+    active_patients = db.query(RADETRecord).filter(RADETRecord.is_active == True).count()
+    
+    # Validation stats
+    total_validations = db.query(ValidationResult).count()
+    distinct_patients_validated = db.query(ValidationResult.patient_id).distinct().count()
+    
+    # Correction stats
+    pending_corrections = db.query(CorrectionLog).filter(CorrectionLog.status == CorrectionStatus.PENDING).count()
+    approved_corrections = db.query(CorrectionLog).filter(CorrectionLog.status == CorrectionStatus.APPROVED).count()
+    rejected_corrections = db.query(CorrectionLog).filter(CorrectionLog.status == CorrectionStatus.REJECTED).count()
+    
+    # Database size (for SQLite)
+    db_size = None
+    if "sqlite" in DATABASE_URL:
+        import os
+        db_path = DATABASE_URL.replace("sqlite:///", "")
+        if os.path.exists(db_path):
+            db_size = os.path.getsize(db_path) / (1024 * 1024)  # MB
+    
+    return {
+        "users": {
+            "total": total_users,
+            "admins": admin_users,
+            "supervisors": supervisor_users,
+            "staff": staff_users
+        },
+        "cycles": {
+            "total": total_cycles,
+            "active": active_cycle.id if active_cycle else None,
+            "active_name": active_cycle.name if active_cycle else None
+        },
+        "patients": {
+            "total": total_patients,
+            "active": active_patients
+        },
+        "validations": {
+            "total": total_validations,
+            "patients_validated": distinct_patients_validated
+        },
+        "corrections": {
+            "pending": pending_corrections,
+            "approved": approved_corrections,
+            "rejected": rejected_corrections
+        },
+        "database": {
+            "type": "PostgreSQL" if "postgresql" in DATABASE_URL else "SQLite",
+            "size_mb": round(db_size, 2) if db_size else None
+        }
+    }
+
+# ==================== ADMIN LOGS ENDPOINTS ====================
+
+@app.get("/api/admin/audit-logs")
+async def get_audit_logs(
+    limit: int = 100,
+    offset: int = 0,
+    user_id: Optional[int] = None,
+    action: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Get system audit logs (admin only)"""
+    
+    # This would require an AuditLog model to be created
+    # For now, we can return validation history as audit trail
+    
+    query = db.query(ValidationResult).order_by(ValidationResult.validation_date.desc())
+    
+    if user_id:
+        query = query.filter(ValidationResult.user_id == user_id)
+    
+    if start_date:
+        start = datetime.fromisoformat(start_date)
+        query = query.filter(ValidationResult.validation_date >= start)
+    
+    if end_date:
+        end = datetime.fromisoformat(end_date)
+        query = query.filter(ValidationResult.validation_date <= end)
+    
+    total = query.count()
+    logs = query.offset(offset).limit(limit).all()
+    
+    # Format logs for display
+    formatted_logs = []
+    for log in logs:
+        user = db.query(User).filter(User.id == log.user_id).first()
+        formatted_logs.append({
+            "id": log.id,
+            "timestamp": log.validation_date.isoformat() if log.validation_date else None,
+            "user_id": log.user_id,
+            "username": user.username if user else "Unknown",
+            "action": "VALIDATION",
+            "details": f"Validated field '{log.field_name}' for patient {log.hospital_number} - Status: {log.status}",
+            "hospital_number": log.hospital_number,
+            "field_name": log.field_name,
+            "status": log.status
+        })
+    
+    return {
+        "logs": formatted_logs,
+        "total": total,
+        "limit": limit,
+        "offset": offset
+    }
+
+@app.get("/api/admin/export-logs")
+async def export_system_logs(
+    format: str = "csv",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Export system logs (admin only)"""
+    
+    query = db.query(ValidationResult).order_by(ValidationResult.validation_date.desc())
+    
+    if start_date:
+        start = datetime.fromisoformat(start_date)
+        query = query.filter(ValidationResult.validation_date >= start)
+    
+    if end_date:
+        end = datetime.fromisoformat(end_date)
+        query = query.filter(ValidationResult.validation_date <= end)
+    
+    logs = query.all()
+    
+    export_data = []
+    for log in logs:
+        user = db.query(User).filter(User.id == log.user_id).first()
+        export_data.append({
+            "timestamp": log.validation_date.isoformat() if log.validation_date else None,
+            "user": user.username if user else "Unknown",
+            "action": "VALIDATION",
+            "hospital_number": log.hospital_number,
+            "field": log.field_name,
+            "radet_value": log.radet_value,
+            "care_card_value": log.care_card_value,
+            "status": log.status,
+            "logical_error": log.logical_error_description
+        })
+    
+    return {"export_data": export_data}
+
+# ==================== ADMIN DATA BACKUP/RESTORE ENDPOINTS ====================
+
+@app.post("/api/admin/backup")
+async def create_backup(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Create a database backup (admin only)"""
+    
+    backup_dir = "backups"
+    os.makedirs(backup_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = os.path.join(backup_dir, f"backup_{timestamp}.json")
+    
+    try:
+        # Export all data
+        users = db.query(User).all()
+        cycles = db.query(ValidationCycle).all()
+        patients = db.query(RADETRecord).all()
+        validations = db.query(ValidationResult).all()
+        corrections = db.query(CorrectionLog).all()
+        events = db.query(ClinicalEvent).all()
+        
+        backup_data = {
+            "timestamp": datetime.now().isoformat(),
+            "version": "2.0",
+            "data": {
+                "users": [{"id": u.id, "username": u.username, "full_name": u.full_name, 
+                          "role": u.role, "facility": u.facility, "created_at": u.created_at.isoformat() if u.created_at else None}
+                         for u in users],
+                "cycles": [{"id": c.id, "name": c.name, "description": c.description,
+                           "start_date": c.start_date.isoformat() if c.start_date else None,
+                           "end_date": c.end_date.isoformat() if c.end_date else None,
+                           "is_active": c.is_active}
+                          for c in cycles],
+                "patients": [{"id": p.id, "cycle_id": p.cycle_id, "hospital_number": p.hospital_number,
+                             "date_of_birth": p.date_of_birth.isoformat() if p.date_of_birth else None,
+                             "sex": p.sex, "art_start_date": p.art_start_date.isoformat() if p.art_start_date else None,
+                             "current_regimen": p.current_regimen, "last_drug_pickup": p.last_drug_pickup.isoformat() if p.last_drug_pickup else None,
+                             "months_of_arv_dispensed": p.months_of_arv_dispensed, "is_active": p.is_active}
+                            for p in patients],
+                "validations": [{"id": v.id, "cycle_id": v.cycle_id, "patient_id": v.patient_id,
+                                "hospital_number": v.hospital_number, "field_name": v.field_name,
+                                "radet_value": v.radet_value, "care_card_value": v.care_card_value,
+                                "status": v.status, "validation_date": v.validation_date.isoformat() if v.validation_date else None}
+                               for v in validations],
+                "corrections": [{"id": c.id, "patient_id": c.patient_id, "hospital_number": c.hospital_number,
+                                "field_name": c.field_name, "old_value": c.old_value, "new_value": c.new_value,
+                                "reason": c.reason, "status": c.status, "created_at": c.created_at.isoformat() if c.created_at else None}
+                               for c in corrections],
+                "events": [{"id": e.id, "patient_id": e.patient_id, "event_type": e.event_type,
+                           "event_date": e.event_date.isoformat() if e.event_date else None,
+                           "value": e.value, "notes": e.notes}
+                          for e in events]
+            }
+        }
+        
+        with open(backup_file, "w") as f:
+            json.dump(backup_data, f, indent=2, default=str)
+        
+        return {
+            "message": "Backup created successfully",
+            "file": backup_file,
+            "size_bytes": os.path.getsize(backup_file),
+            "timestamp": timestamp
+        }
+        
+    except Exception as e:
+        logger.error(f"Backup failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Backup failed: {str(e)}")
+
+@app.get("/api/admin/backups")
+async def list_backups(
+    current_user: User = Depends(require_role(UserRole.ADMIN))
+):
+    """List available backups (admin only)"""
+    
+    backup_dir = "backups"
+    if not os.path.exists(backup_dir):
+        return {"backups": []}
+    
+    backups = []
+    for file in os.listdir(backup_dir):
+        if file.startswith("backup_") and file.endswith(".json"):
+            file_path = os.path.join(backup_dir, file)
+            stat = os.stat(file_path)
+            backups.append({
+                "filename": file,
+                "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                "modified": datetime.fromtimestamp(stat.st_mtime).isoformat()
+            })
+    
+    backups.sort(key=lambda x: x["modified"], reverse=True)
+    return {"backups": backups}
+
+# ==================== SYSTEM CONFIGURATION ENDPOINTS ====================
+
+@app.get("/api/admin/system-config")
+async def get_system_config(
+    current_user: User = Depends(require_role(UserRole.ADMIN))
+):
+    """Get current system configuration (admin only)"""
+    
+    config_file = "config/system.json"
+    default_config = {
+        "validation_rules": {
+            "enable_logical_error_detection": True,
+            "require_supervisor_approval": True,
+            "auto_approve_minor_corrections": False,
+            "treatment_interruption_days": 28
+        },
+        "security": {
+            "enable_two_factor": False,
+            "password_expiry_days": 90,
+            "session_timeout_minutes": 30,
+            "max_login_attempts": 5
+        },
+        "data_retention": {
+            "policy": "archive_6_months",
+            "archive_days": 180,
+            "auto_delete_days": None
+        }
+    }
+    
+    if os.path.exists(config_file):
+        with open(config_file, "r") as f:
+            config = json.load(f)
+            return config
+    
+    return default_config
+
+@app.post("/api/admin/system-config")
+async def update_system_config(
+    config: Dict[str, Any],
+    current_user: User = Depends(require_role(UserRole.ADMIN))
+):
+    """Update system configuration (admin only)"""
+    
+    config_file = "config/system.json"
+    os.makedirs("config", exist_ok=True)
+    
+    with open(config_file, "w") as f:
+        json.dump(config, f, indent=2)
+    
+    return {"message": "Configuration saved successfully"}
+
+# ==================== DATABASE MAINTENANCE ENDPOINTS ====================
+
+@app.post("/api/admin/database/cleanup")
+async def cleanup_database(
+    days_to_keep: int = 365,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    """Clean up old data (admin only)"""
+    
+    cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+    
+    # Get old cycles (completed and older than cutoff)
+    old_cycles = db.query(ValidationCycle).filter(
+        ValidationCycle.end_date.isnot(None),
+        ValidationCycle.end_date < cutoff_date
+    ).all()
+    
+    deleted_cycles = 0
+    deleted_patients = 0
+    deleted_validations = 0
+    
+    for cycle in old_cycles:
+        # Count patients in this cycle
+        patients = db.query(RADETRecord).filter(RADETRecord.cycle_id == cycle.id).count()
+        validations = db.query(ValidationResult).filter(ValidationResult.cycle_id == cycle.id).count()
+        
+        # Delete cascade should handle related records
+        db.delete(cycle)
+        
+        deleted_cycles += 1
+        deleted_patients += patients
+        deleted_validations += validations
+    
+    db.commit()
+    
+    return {
+        "message": "Database cleanup completed",
+        "deleted": {
+            "cycles": deleted_cycles,
+            "patients": deleted_patients,
+            "validations": deleted_validations
+        },
+        "cutoff_date": cutoff_date.isoformat()
     }
 
 @app.get("/api/debug/test-queries")

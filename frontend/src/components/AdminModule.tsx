@@ -111,7 +111,7 @@ import {
   Description as DescriptionIcon,
   FolderOpen as FolderOpenIcon
 } from '@mui/icons-material';
-import { cycles, radet, auth, analytics, dashboard } from '../api';
+import { cycles, radet, auth, analytics, dashboard, admin } from '../api';
 import type { 
   User, 
   ValidationCycle, 
@@ -125,13 +125,7 @@ interface AdminModuleProps {
 }
 
 // Tab Panel Component
-interface TabPanelProps {
-  children?: React.ReactNode;
-  index: number;
-  value: number;
-}
-
-function TabPanel(props: TabPanelProps) {
+function TabPanel(props: any) {
   const { children, value, index, ...other } = props;
 
   return (
@@ -488,6 +482,7 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
     totalValidations: 0,
     systemHealth: 100
   });
+  const [systemConfig, setSystemConfig] = useState<any>(null);
 
   const [newUser, setNewUser] = useState<UserCreate>({
     username: '',
@@ -501,6 +496,7 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
     fetchCycles();
     fetchUsers();
     fetchStats();
+    fetchSystemConfig();
   }, []);
 
   const fetchCycles = async () => {
@@ -523,15 +519,15 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
   const fetchUsers = async () => {
     setStatsLoading(true);
     try {
-      // This would need a dedicated endpoint - using mock for now
-      // Once you have the endpoint, replace this with actual API call
-      // const response = await admin.getUsers();
-      // setUsers(response);
-      
-      // For now, showing empty state
-      setUsers([]);
+      const usersData = await admin.getUsers();
+      setUsers(usersData);
     } catch (error) {
       console.error('Error fetching users:', error);
+      setSnackbar({
+        open: true,
+        message: 'Error fetching users',
+        severity: 'error'
+      });
     } finally {
       setStatsLoading(false);
     }
@@ -539,17 +535,24 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
 
   const fetchStats = async () => {
     try {
-      const dashboardStats = await dashboard.getStats();
-      const activeCycle = await cycles.getActive();
-      
+      const systemStats = await admin.getSystemStats();
       setStats({
-        totalUsers: users.length, // This will be updated when user API is ready
-        activeCycles: activeCycle?.has_active_cycle ? 1 : 0,
-        totalValidations: dashboardStats?.total_validations || 0,
+        totalUsers: systemStats.users?.total || 0,
+        activeCycles: systemStats.cycles?.active ? 1 : 0,
+        totalValidations: systemStats.validations?.total || 0,
         systemHealth: 100
       });
     } catch (error) {
       console.error('Error fetching stats:', error);
+    }
+  };
+
+  const fetchSystemConfig = async () => {
+    try {
+      const config = await admin.getSystemConfig();
+      setSystemConfig(config);
+    } catch (error) {
+      console.error('Error fetching system config:', error);
     }
   };
 
@@ -559,7 +562,6 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
     setUploading(true);
     setUploadProgress(0);
     
-    // Simulate upload progress
     const interval = setInterval(() => {
       setUploadProgress(prev => {
         if (prev >= 90) {
@@ -580,7 +582,6 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
         severity: 'success'
       });
       
-      // Refresh cycles to update stats
       fetchCycles();
       
       setTimeout(() => {
@@ -618,8 +619,8 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
         role: 'staff',
         facility: ''
       });
-      // Refresh user list
       fetchUsers();
+      fetchStats();
     } catch (error: any) {
       setSnackbar({
         open: true,
@@ -642,10 +643,10 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
   };
 
   const handleUpdateUser = async () => {
+    if (!editingUser) return;
+    
     try {
-      // This would need a dedicated endpoint
-      // await admin.updateUser(editingUser?.id, newUser);
-      
+      await admin.updateUser(editingUser.id, newUser);
       setSnackbar({
         open: true,
         message: 'User updated successfully',
@@ -661,6 +662,7 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
         facility: ''
       });
       fetchUsers();
+      fetchStats();
     } catch (error: any) {
       setSnackbar({
         open: true,
@@ -674,9 +676,7 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
     if (!userToDelete) return;
     
     try {
-      // This would need a dedicated endpoint
-      // await admin.deleteUser(userToDelete.id);
-      
+      await admin.deleteUser(userToDelete.id);
       setSnackbar({
         open: true,
         message: 'User deleted successfully',
@@ -685,10 +685,63 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
       setDeleteDialogOpen(false);
       setUserToDelete(null);
       fetchUsers();
+      fetchStats();
     } catch (error: any) {
       setSnackbar({
         open: true,
         message: error.message || 'Error deleting user',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    try {
+      const result = await admin.createBackup();
+      setSnackbar({
+        open: true,
+        message: `Backup created: ${result.file}`,
+        severity: 'success'
+      });
+    } catch (error: any) {
+      setSnackbar({
+        open: true,
+        message: error.message || 'Error creating backup',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleExportLogs = async () => {
+    try {
+      const result = await admin.exportLogs({ format: 'csv' });
+      admin.downloadBackup(result, 'system-logs', 'csv');
+      setSnackbar({
+        open: true,
+        message: 'Logs exported successfully',
+        severity: 'success'
+      });
+    } catch (error: any) {
+      setSnackbar({
+        open: true,
+        message: error.message || 'Error exporting logs',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleSaveSystemConfig = async () => {
+    try {
+      await admin.updateSystemConfig(systemConfig);
+      setSnackbar({
+        open: true,
+        message: 'Configuration saved successfully',
+        severity: 'success'
+      });
+    } catch (error: any) {
+      setSnackbar({
+        open: true,
+        message: error.message || 'Error saving configuration',
         severity: 'error'
       });
     }
@@ -824,6 +877,7 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
                 fullWidth
                 variant="outlined"
                 startIcon={<DownloadIcon />}
+                onClick={handleExportLogs}
                 sx={{ py: 1.5, borderRadius: 2 }}
               >
                 Export System Logs
@@ -976,21 +1030,61 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
               <AccordionDetails>
                 <Stack spacing={2}>
                   <FormControlLabel
-                    control={<Switch defaultChecked />}
+                    control={
+                      <Switch 
+                        checked={systemConfig?.validation_rules?.enable_logical_error_detection ?? true}
+                        onChange={(e) => setSystemConfig({
+                          ...systemConfig,
+                          validation_rules: {
+                            ...systemConfig?.validation_rules,
+                            enable_logical_error_detection: e.target.checked
+                          }
+                        })}
+                      />
+                    }
                     label="Enable logical error detection"
                   />
                   <FormControlLabel
-                    control={<Switch defaultChecked />}
+                    control={
+                      <Switch 
+                        checked={systemConfig?.validation_rules?.require_supervisor_approval ?? true}
+                        onChange={(e) => setSystemConfig({
+                          ...systemConfig,
+                          validation_rules: {
+                            ...systemConfig?.validation_rules,
+                            require_supervisor_approval: e.target.checked
+                          }
+                        })}
+                      />
+                    }
                     label="Require supervisor approval for corrections"
                   />
                   <FormControlLabel
-                    control={<Switch />}
+                    control={
+                      <Switch 
+                        checked={systemConfig?.validation_rules?.auto_approve_minor_corrections ?? false}
+                        onChange={(e) => setSystemConfig({
+                          ...systemConfig,
+                          validation_rules: {
+                            ...systemConfig?.validation_rules,
+                            auto_approve_minor_corrections: e.target.checked
+                          }
+                        })}
+                      />
+                    }
                     label="Auto-approve minor corrections"
                   />
                   <TextField
                     label="Days until treatment interruption alert"
                     type="number"
-                    defaultValue={28}
+                    value={systemConfig?.validation_rules?.treatment_interruption_days ?? 28}
+                    onChange={(e) => setSystemConfig({
+                      ...systemConfig,
+                      validation_rules: {
+                        ...systemConfig?.validation_rules,
+                        treatment_interruption_days: parseInt(e.target.value)
+                      }
+                    })}
                     size="small"
                     sx={{ maxWidth: 200 }}
                   />
@@ -1005,17 +1099,60 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
               <AccordionDetails>
                 <Stack spacing={2}>
                   <FormControlLabel
-                    control={<Switch defaultChecked />}
+                    control={
+                      <Switch 
+                        checked={systemConfig?.security?.enable_two_factor ?? false}
+                        onChange={(e) => setSystemConfig({
+                          ...systemConfig,
+                          security: {
+                            ...systemConfig?.security,
+                            enable_two_factor: e.target.checked
+                          }
+                        })}
+                      />
+                    }
                     label="Enable two-factor authentication"
                   />
                   <FormControlLabel
-                    control={<Switch defaultChecked />}
+                    control={
+                      <Switch 
+                        checked={systemConfig?.security?.password_expiry_days !== null ?? true}
+                        onChange={(e) => setSystemConfig({
+                          ...systemConfig,
+                          security: {
+                            ...systemConfig?.security,
+                            password_expiry_days: e.target.checked ? 90 : null
+                          }
+                        })}
+                      />
+                    }
                     label="Require password change every 90 days"
                   />
                   <TextField
                     label="Session timeout (minutes)"
                     type="number"
-                    defaultValue={30}
+                    value={systemConfig?.security?.session_timeout_minutes ?? 30}
+                    onChange={(e) => setSystemConfig({
+                      ...systemConfig,
+                      security: {
+                        ...systemConfig?.security,
+                        session_timeout_minutes: parseInt(e.target.value)
+                      }
+                    })}
+                    size="small"
+                    sx={{ maxWidth: 200 }}
+                  />
+                  <TextField
+                    label="Max login attempts"
+                    type="number"
+                    value={systemConfig?.security?.max_login_attempts ?? 5}
+                    onChange={(e) => setSystemConfig({
+                      ...systemConfig,
+                      security: {
+                        ...systemConfig?.security,
+                        max_login_attempts: parseInt(e.target.value)
+                      }
+                    })}
                     size="small"
                     sx={{ maxWidth: 200 }}
                   />
@@ -1029,21 +1166,84 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
               </AccordionSummary>
               <AccordionDetails>
                 <Stack spacing={2}>
-                  <FormControlLabel
-                    control={<Radio />}
-                    label="Keep data indefinitely"
-                  />
-                  <FormControlLabel
-                    control={<Radio />}
-                    label="Auto-delete after 1 year"
-                  />
-                  <FormControlLabel
-                    control={<Radio defaultChecked />}
-                    label="Archive after 6 months"
-                  />
+                  <RadioGroup
+                    value={systemConfig?.data_retention?.policy ?? "archive_6_months"}
+                    onChange={(e) => setSystemConfig({
+                      ...systemConfig,
+                      data_retention: {
+                        ...systemConfig?.data_retention,
+                        policy: e.target.value
+                      }
+                    })}
+                  >
+                    <FormControlLabel 
+                      value="keep_indefinitely" 
+                      control={<Radio />} 
+                      label="Keep data indefinitely" 
+                    />
+                    <FormControlLabel 
+                      value="auto_delete_1_year" 
+                      control={<Radio />} 
+                      label="Auto-delete after 1 year" 
+                    />
+                    <FormControlLabel 
+                      value="archive_6_months" 
+                      control={<Radio />} 
+                      label="Archive after 6 months" 
+                    />
+                  </RadioGroup>
+                  
+                  {systemConfig?.data_retention?.policy === "auto_delete_1_year" && (
+                    <TextField
+                      label="Days until deletion"
+                      type="number"
+                      value={systemConfig?.data_retention?.auto_delete_days ?? 365}
+                      onChange={(e) => setSystemConfig({
+                        ...systemConfig,
+                        data_retention: {
+                          ...systemConfig?.data_retention,
+                          auto_delete_days: parseInt(e.target.value)
+                        }
+                      })}
+                      size="small"
+                      sx={{ maxWidth: 200 }}
+                      helperText="Data older than this will be automatically deleted"
+                    />
+                  )}
+                  
+                  {systemConfig?.data_retention?.policy === "archive_6_months" && (
+                    <TextField
+                      label="Days until archive"
+                      type="number"
+                      value={systemConfig?.data_retention?.archive_days ?? 180}
+                      onChange={(e) => setSystemConfig({
+                        ...systemConfig,
+                        data_retention: {
+                          ...systemConfig?.data_retention,
+                          archive_days: parseInt(e.target.value)
+                        }
+                      })}
+                      size="small"
+                      sx={{ maxWidth: 200 }}
+                      helperText="Data older than this will be archived"
+                    />
+                  )}
                 </Stack>
               </AccordionDetails>
             </Accordion>
+
+            <Box sx={{ mt: 3, display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                variant="contained"
+                onClick={handleSaveSystemConfig}
+                startIcon={<SaveIcon />}
+                sx={{
+                  background: `linear-gradient(45deg, ${theme.palette.primary.main}, ${theme.palette.secondary.main})`
+                }}
+              >
+                Save Configuration
+              </Button>
+            </Box>
           </Box>
         </TabPanel>
 
@@ -1067,11 +1267,16 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
                           Backup Database
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Last backup: Not available
+                          Create a full backup of all system data
                         </Typography>
                       </Box>
                     </Box>
-                    <Button variant="outlined" startIcon={<BackupIcon />} fullWidth>
+                    <Button 
+                      variant="outlined" 
+                      startIcon={<BackupIcon />} 
+                      fullWidth
+                      onClick={handleCreateBackup}
+                    >
                       Create Backup
                     </Button>
                   </CardContent>
@@ -1090,11 +1295,17 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
                           Restore Data
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
-                          Available backups: 0
+                          Restore from a previous backup
                         </Typography>
                       </Box>
                     </Box>
-                    <Button variant="outlined" color="warning" startIcon={<RestoreIcon />} fullWidth disabled>
+                    <Button 
+                      variant="outlined" 
+                      color="warning" 
+                      startIcon={<RestoreIcon />} 
+                      fullWidth 
+                      disabled
+                    >
                       Restore from Backup
                     </Button>
                   </CardContent>
@@ -1111,15 +1322,10 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
                       <Grid item xs={6} sm={3}>
                         <Box sx={{ textAlign: 'center' }}>
                           <StorageIcon color="action" sx={{ fontSize: 40, mb: 1 }} />
-                          <Typography variant="h6">-</Typography>
-                          <Typography variant="caption" color="text.secondary">Total Size</Typography>
-                        </Box>
-                      </Grid>
-                      <Grid item xs={6} sm={3}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <PeopleIcon color="action" sx={{ fontSize: 40, mb: 1 }} />
-                          <Typography variant="h6">{allCycles[0]?.stats?.total_patients || 0}</Typography>
-                          <Typography variant="caption" color="text.secondary">Patients</Typography>
+                          <Typography variant="h6">
+                            {allCycles.reduce((sum, cycle) => sum + (cycle.stats?.total_patients || 0), 0)}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">Total Patients</Typography>
                         </Box>
                       </Grid>
                       <Grid item xs={6} sm={3}>
@@ -1127,6 +1333,13 @@ export default function AdminModule({ user, onCreateCycle }: AdminModuleProps) {
                           <AssignmentIcon color="action" sx={{ fontSize: 40, mb: 1 }} />
                           <Typography variant="h6">{stats.totalValidations}</Typography>
                           <Typography variant="caption" color="text.secondary">Validations</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={6} sm={3}>
+                        <Box sx={{ textAlign: 'center' }}>
+                          <PeopleIcon color="action" sx={{ fontSize: 40, mb: 1 }} />
+                          <Typography variant="h6">{stats.totalUsers}</Typography>
+                          <Typography variant="caption" color="text.secondary">Users</Typography>
                         </Box>
                       </Grid>
                       <Grid item xs={6} sm={3}>

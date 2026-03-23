@@ -600,6 +600,7 @@ const AnimatedNumber: React.FC<AnimatedNumberProps> = ({ value, duration = 1000,
 // ==================== MAIN COMPONENT ====================
 
 export default function Dashboard({ user, activeCycle }: DashboardProps) {
+  
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const isTablet = useMediaQuery(theme.breakpoints.down('md'));
